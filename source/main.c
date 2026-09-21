@@ -41,33 +41,106 @@ int score;
 Bullet bullets[MAX_BULLETS];
 Enemy enemies[MAX_ENEMIES];
 
+// Dibuja una silueta humanoide simple 16x16: cabeza, torso, piernas separadas y brazo+arma
+void buildHumanoid(u8* out, u8 skin, u8 body, u8 legs, u8 gun) {
+    for (int i = 0; i < 256; i++) out[i] = 0;
+    for (int y = 1; y <= 4; y++)
+        for (int x = 6; x <= 9; x++) out[y * 16 + x] = skin;
+    for (int y = 5; y <= 10; y++)
+        for (int x = 4; x <= 11; x++) out[y * 16 + x] = body;
+    for (int y = 11; y <= 14; y++) {
+        for (int x = 5; x <= 7; x++) out[y * 16 + x] = legs;
+        for (int x = 9; x <= 11; x++) out[y * 16 + x] = legs;
+    }
+    for (int y = 6; y <= 7; y++)
+        for (int x = 11; x <= 15; x++) out[y * 16 + x] = gun;
+}
+
+// Duplica cada pixel 2x2 para pasar de 16x16 a 32x32 (mismo dibujo, mas grande)
+void upscale2x(const u8* src16, u8* dst32) {
+    for (int y = 0; y < 16; y++) {
+        for (int x = 0; x < 16; x++) {
+            u8 v = src16[y * 16 + x];
+            int dx = x * 2, dy = y * 2;
+            dst32[dy * 32 + dx] = v;
+            dst32[dy * 32 + dx + 1] = v;
+            dst32[(dy + 1) * 32 + dx] = v;
+            dst32[(dy + 1) * 32 + dx + 1] = v;
+        }
+    }
+}
+
+// Bloque de suelo con textura: franja de pasto arriba + tierra con motas oscuras
+void buildGroundTile(u8* out, u8 grass, u8 dirt, u8 darkDirt) {
+    for (int y = 0; y < 16; y++) {
+        for (int x = 0; x < 16; x++) {
+            if (y < 3) out[y * 16 + x] = grass;
+            else if ((x + y) % 4 == 0) out[y * 16 + x] = darkDirt;
+            else out[y * 16 + x] = dirt;
+        }
+    }
+}
+
+// Bala pequena en forma de rombo en vez de cuadrado
+void buildBulletShape(u8* out, u8 color) {
+    static const char shape[8][8] = {
+        {0,0,0,1,1,0,0,0},
+        {0,0,1,1,1,1,0,0},
+        {0,1,1,1,1,1,1,0},
+        {1,1,1,1,1,1,1,1},
+        {1,1,1,1,1,1,1,1},
+        {0,1,1,1,1,1,1,0},
+        {0,0,1,1,1,1,0,0},
+        {0,0,0,1,1,0,0,0},
+    };
+    for (int y = 0; y < 8; y++)
+        for (int x = 0; x < 8; x++)
+            out[y * 8 + x] = shape[y][x] ? color : 0;
+}
+
 void setupSprites(void) {
     // --- Sprites pantalla principal ---
     vramSetBankA(VRAM_A_MAIN_SPRITE);
     oamInit(&oamMain, SpriteMapping_1D_32, false);
 
-    SPRITE_PALETTE[1] = RGB15(31, 20, 0);  // jugador
-    SPRITE_PALETTE[2] = RGB15(31, 31, 0);  // bala normal
-    SPRITE_PALETTE[3] = RGB15(31, 0, 0);   // enemigo
-    SPRITE_PALETTE[4] = RGB15(10, 25, 5);  // suelo
-    SPRITE_PALETTE[6] = RGB15(31, 12, 0);  // bala en modo rampage
-    SPRITE_PALETTE[12] = RGB15(31, 24, 10);// silueta bro (intro/menu)
+    SPRITE_PALETTE[1] = RGB15(31, 22, 15);  // piel
+    SPRITE_PALETTE[2] = RGB15(6, 18, 4);    // uniforme bro (verde militar)
+    SPRITE_PALETTE[3] = RGB15(10, 10, 10);  // pantalon/bota oscura
+    SPRITE_PALETTE[4] = RGB15(3, 3, 3);     // arma (negro)
+    SPRITE_PALETTE[5] = RGB15(6, 22, 4);    // pasto
+    SPRITE_PALETTE[6] = RGB15(14, 9, 4);    // tierra
+    SPRITE_PALETTE[7] = RGB15(8, 5, 2);     // tierra oscura
+    SPRITE_PALETTE[8] = RGB15(31, 31, 4);   // bala normal
+    SPRITE_PALETTE[9] = RGB15(31, 14, 2);   // bala rampage
+    SPRITE_PALETTE[21] = RGB15(20, 3, 3);   // uniforme enemigo (rojo)
 
     playerGfx = oamAllocateGfx(&oamMain, SpriteSize_16x16, SpriteColorFormat_256Color);
     groundGfx = oamAllocateGfx(&oamMain, SpriteSize_16x16, SpriteColorFormat_256Color);
     broGfx    = oamAllocateGfx(&oamMain, SpriteSize_32x32, SpriteColorFormat_256Color);
 
-    dmaFillHalfWords(0x0101, playerGfx, 16 * 16);
-    dmaFillHalfWords(0x0404, groundGfx, 16 * 16);
-    dmaFillHalfWords(0x0C0C, broGfx, 32 * 32);
+    u8 tmp16[256];
+    u8 tmp32[1024];
+    u8 tmp8[64];
 
+    buildHumanoid(tmp16, 1, 2, 3, 4);
+    dmaCopy(tmp16, playerGfx, 256);
+
+    upscale2x(tmp16, tmp32);
+    dmaCopy(tmp32, broGfx, 1024);
+
+    buildGroundTile(tmp16, 5, 6, 7);
+    dmaCopy(tmp16, groundGfx, 256);
+
+    buildBulletShape(tmp8, 8);
     for (int i = 0; i < MAX_BULLETS; i++) {
         bulletGfx[i] = oamAllocateGfx(&oamMain, SpriteSize_8x8, SpriteColorFormat_256Color);
-        dmaFillHalfWords(0x0202, bulletGfx[i], 8 * 8);
+        dmaCopy(tmp8, bulletGfx[i], 64);
     }
+
+    buildHumanoid(tmp16, 1, 21, 3, 4);
     for (int i = 0; i < MAX_ENEMIES; i++) {
         enemyGfx[i] = oamAllocateGfx(&oamMain, SpriteSize_16x16, SpriteColorFormat_256Color);
-        dmaFillHalfWords(0x0303, enemyGfx[i], 16 * 16);
+        dmaCopy(tmp16, enemyGfx[i], 256);
     }
 
     // --- Sprites pantalla tactil (HUD) ---
